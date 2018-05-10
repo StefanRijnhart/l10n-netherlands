@@ -6,6 +6,7 @@ import base64
 from StringIO import StringIO
 from lxml import etree
 from datetime import datetime
+from zipfile import ZipFile, ZIP_DEFLATED
 from openerp import _, models, fields, api, exceptions, release, modules
 
 
@@ -24,7 +25,7 @@ class XafAuditfileExport(models.Model):
 
     @api.depends('name')
     def _auditfile_name_get(self):
-        self.auditfile_name = '%s.xaf' % self.name
+        self.auditfile_name = '%s.xaf.zip' % self.name
 
     name = fields.Char('Name')
     period_start = fields.Many2one(
@@ -130,8 +131,11 @@ class XafAuditfileExport(models.Model):
             self.message_post('\n'.join(map(str, xsd.error_log)))
             return
 
-        self.auditfile = base64.b64encode(etree.tostring(
-            xmldoc, xml_declaration=True, encoding='UTF-8'))
+        auditfile_zip = StringIO()
+        with ZipFile(auditfile_zip, mode='w', compression=ZIP_DEFLATED) as zf:
+            zf.writestr(self.name + '.xaf', etree.tostring(
+                xmldoc, xml_declaration=True, encoding='UTF-8'))
+        self.auditfile = base64.b64encode(auditfile_zip.getvalue())
 
     @api.multi
     def _get_auditfile_template(self):
