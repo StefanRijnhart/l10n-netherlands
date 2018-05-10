@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
 # Copyright (C) 2015 Therp BV <http://therp.nl>.
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
-
 import base64
+import time
+import logging
 from StringIO import StringIO
 from lxml import etree
 from datetime import datetime
 from openerp import _, models, fields, api, exceptions, release, modules
 
 
-MAX_RECORDS = 10000
-'''For possibly huge lists, only read chunks from the database in order to
-avoid oom exceptions.
-This is the default for ir.config_parameter
-"l10n_nl_xaf_auditfile_export.max_records"'''
+def chunks(l, n=None):
+    """Yield successive n-sized chunks from l."""
+    if n is None:
+        n = models.PREFETCH_MAX
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
+
+_logger = logging.getLogger(__name__)
 
 
 class XafAuditfileExport(models.Model):
@@ -178,21 +182,17 @@ class XafAuditfileExport(models.Model):
     @api.multi
     def get_partners(self, partner_ids):
         '''return a generator over partners'''
-        offset = 0
-        while True:
-            results = self.env['res.partner'].search(
-                [('id', 'in', partner_ids)],
-                offset=offset, order='display_name',
-                limit=self.env['ir.config_parameter'].get_param(
-                    'l10n_nl_xaf_auditfile_export.max_records',
-                    default=MAX_RECORDS))
-            if not results:
-                break
-            offset += MAX_RECORDS
-            for result in results:
-                yield result
-            results.env.invalidate_all()
-            del results
+        t0 = time.time()
+        for chunk in chunks(partner_ids):
+            t1 = time.time()
+            for partner in self.env['res.partner'].browse(chunk):
+                yield partner
+            self.env.invalidate_all()
+            _logger.debug(
+                'Processed %s partners in %s', len(chunk), time.time() - t1)
+        _logger.debug(
+            'Processed all %s partners in %s', len(partner_ids), time.time() - t0)
+            
 
     @api.multi
     def get_move_line_count(self, periods):
@@ -233,21 +233,17 @@ class XafAuditfileExport(models.Model):
     @api.multi
     def get_moves(self, journal, periods):
         '''return moves for a journal, generator style'''
-        offset = 0
-        while True:
-            results = self.env['account.move'].search(
-                [
-                    ('period_id', 'in', periods.ids),
-                    ('journal_id', '=', journal.id),
-                ],
-                offset=offset,
-                limit=int(self.env['ir.config_parameter'].get_param(
-                    'l10n_nl_xaf_auditfile_export.max_records',
-                    default=MAX_RECORDS)))
-            if not results:
-                break
-            offset += MAX_RECORDS
-            for result in results:
-                yield result
-            results.env.invalidate_all()
-            del results
+        t0 = time.time()
+        move_ids = self.env['account.move'].search([
+            ('period_id', 'in', periods.ids),
+            ('journal_id', '=', journal.id)]).ids
+        self.env.invalidate_all()
+        for chunk in chunks(move_ids):
+            t1 = time.time()
+            for move in self.env['account.move'].browse(chunk):
+                yield move
+            self.env.invalidate_all()
+            _logger.debug(
+                'Processed %s moves in %s', len(chunk), time.time() - t1)
+        _logger.debug(
+            'Processed all %s moves in %s', len(move_ids), time.time() - t0)
