@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 # Copyright (C) 2015 Therp BV <http://therp.nl>.
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
+import os
+import shutil
 import base64
+from tempfile import mkdtemp
 import time
 import logging
 from StringIO import StringIO
 from lxml import etree
 from datetime import datetime
-from zipfile import ZipFile, ZIP_DEFLATED
 from openerp import _, models, fields, api, exceptions, release, modules
 
 
@@ -17,6 +19,7 @@ def chunks(l, n=None):
         n = models.PREFETCH_MAX
     for i in range(0, len(l), n):
         yield l[i:i + n]
+
 
 _logger = logging.getLogger(__name__)
 
@@ -135,11 +138,18 @@ class XafAuditfileExport(models.Model):
             self.message_post('\n'.join(map(str, xsd.error_log)))
             return
 
-        auditfile_zip = StringIO()
-        with ZipFile(auditfile_zip, mode='w', compression=ZIP_DEFLATED) as zf:
-            zf.writestr(self.name + '.xaf', etree.tostring(
-                xmldoc, xml_declaration=True, encoding='UTF-8'))
-        self.auditfile = base64.b64encode(auditfile_zip.getvalue())
+        filename = self.name + '.xaf'
+        tmpdir = mkdtemp()
+        try:
+            tmparchive = os.path.join(tmpdir, filename)
+            with open(tmparchive, 'w') as auditfile:
+                auditfile.write(etree.tostring(
+                    xmldoc, xml_declaration=True, encoding='UTF-8'))
+            zip_path = shutil.make_archive(tmparchive, 'zip')
+            with open(zip_path, 'rb') as auditfile_zip:
+                self.auditfile = base64.b64encode(auditfile_zip.read())
+        finally:
+            shutil.rmtree(tmpdir)
 
     @api.multi
     def _get_auditfile_template(self):
@@ -196,7 +206,6 @@ class XafAuditfileExport(models.Model):
                 'Processed %s partners in %s', len(chunk), time.time() - t1)
         _logger.debug(
             'Processed all %s partners in %s', len(partner_ids), time.time() - t0)
-            
 
     @api.multi
     def get_move_line_count(self, periods):
