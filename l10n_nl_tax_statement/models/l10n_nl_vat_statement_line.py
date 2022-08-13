@@ -139,6 +139,8 @@ class VatStatementLine(models.Model):
 
     def _get_domain_draft(self, taxes, tax_or_base):
         self.ensure_one()
+        if not taxes:
+            return [(0, '=', 1)]
         ctx = taxes.env.context.copy()
         ctx.update({
             'l10n_nl_statement_tax_ids': taxes.ids
