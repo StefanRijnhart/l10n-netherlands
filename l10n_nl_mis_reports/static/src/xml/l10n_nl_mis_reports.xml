@@ -1,6 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
 <template>
     <t t-extend="MisReportWidgetTemplate">
-        <t t-jquery="table.mis_builder">
+        <!--t t-jquery="table.mis_builder">
             var $full_table = jQuery(this);
             var $wrapper = jQuery(
                 '<div />'
@@ -17,6 +18,6 @@
                 't-foreach', 'matrix.body'
             );
             $full_table.attr('t-if', '!widget.mis_report_data.horizontal_matrices');
-    </t>
+    </t-->
     </t>
 </template>

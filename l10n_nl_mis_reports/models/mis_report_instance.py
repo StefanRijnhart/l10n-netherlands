@@ -29,6 +29,7 @@ class MisReportInstance(models.Model):
     def _is_horizontal(self):
         """Determine if the report template is a horizontal one"""
         self.ensure_one()
+        return False
         return set(self.report_id.get_external_id().values()) & {
             "l10n_nl_mis_reports.report_bs",
             "l10n_nl_mis_reports.report_pl",
