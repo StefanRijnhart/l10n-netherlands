@@ -6,14 +6,79 @@
         <field name="model">res.config.settings</field>
         <field name="inherit_id" ref="account.res_config_settings_view_form" />
         <field name="arch" type="xml">
-            <setting id="eu_service" position="after">
-                <setting
-                    help="If this checkbox is ticked, you will enable the Netherlands Tax Invoice Basis (Factuurstelsel)."
-                    company_dependent="1"
+            <block name="default_taxes_setting_container" position="after">
+                <block
+                    name="l10n_nl_tax_statement"
+                    string="NL BTW Statement"
+                    invisible="country_code != 'NL'"
                 >
-                    <field name="l10n_nl_tax_invoice_basis" />
-                </setting>
-            </setting>
+                    <setting
+                        help="If this checkbox is ticked, you will enable the Netherlands Tax Invoice Basis (Factuurstelsel)."
+                        company_dependent="1"
+                    >
+                        <field name="l10n_nl_tax_invoice_basis" />
+                    </setting>
+                    <setting
+                        company_dependent="1"
+                        string="Post a closing entry"
+                        help="By configuring the fields below, you will enable posting a closing entry for each statement"
+                    >
+                        <div class="content-group">
+                            <div class="mt16">
+                                <label
+                                    for="l10n_nl_tax_journal_id"
+                                    string="Journal"
+                                    class="col-2 o_light_label"
+                                />
+                                <field name="l10n_nl_tax_journal_id" />
+                            </div>
+                            <div class="mt16">
+                                <div class="text-muted">
+                                    When a partner is configured, the payable or receivable account used is taken from the partner settings.
+                                </div>
+                                <label
+                                    for="l10n_nl_tax_partner_id"
+                                    string="Tax Authority Partner"
+                                    class="col-2 o_light_label"
+                                />
+                                <field name="l10n_nl_tax_partner_id" />
+                            </div>
+                            <div class="mt16" invisible="not l10n_nl_tax_partner_id">
+                                <label
+                                    for="l10n_nl_tax_payable_account_id"
+                                    string="Payable Tax Account"
+                                    class="col-2 o_light_label"
+                                />
+                                <field name="l10n_nl_tax_payable_account_id" />
+                            </div>
+                            <div class="mt16" invisible="not l10n_nl_tax_partner_id">
+                                <label
+                                    for="l10n_nl_tax_receivable_account_id"
+                                    string="Receivable Tax Account"
+                                    class="col-2 o_light_label"
+                                />
+                                <field name="l10n_nl_tax_receivable_account_id" />
+                            </div>
+                            <div class="mt16">
+                                <label
+                                    for="l10n_nl_tax_rounding_profit_account_id"
+                                    string="Rounding Profit Account"
+                                    class="col-2 o_light_label"
+                                />
+                                <field name="l10n_nl_tax_rounding_profit_account_id" />
+                            </div>
+                            <div class="mt16">
+                                <label
+                                    for="l10n_nl_tax_rounding_loss_account_id"
+                                    string="Rounding Loss Account"
+                                    class="col-2 o_light_label"
+                                />
+                                <field name="l10n_nl_tax_rounding_loss_account_id" />
+                            </div>
+                        </div>
+                    </setting>
+                </block>
+            </block>
             <xpath expr="//setting[@id='tax_exigibility']" position="attributes">
                 <attribute name="invisible">l10n_nl_tax_invoice_basis</attribute>
             </xpath>

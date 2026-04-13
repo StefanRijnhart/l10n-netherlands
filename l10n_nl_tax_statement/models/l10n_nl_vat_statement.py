@@ -2,6 +2,7 @@
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
 import re
+from collections import defaultdict
 from datetime import datetime
 
 from dateutil.relativedelta import relativedelta
@@ -43,6 +44,9 @@ class VatStatement(models.Model):
     currency_id = fields.Many2one("res.currency", related="company_id.currency_id")
     date_posted = fields.Datetime(readonly=True)
     date_update = fields.Datetime(readonly=True)
+    closing_entry_id = fields.Many2one(
+        comodel_name="account.move",
+    )
 
     btw_total = fields.Monetary(
         compute="_compute_btw_total", string="5g. Total (5c + 5d)"
@@ -403,10 +407,12 @@ class VatStatement(models.Model):
 
         # calculate lines
         lines = self._prepare_lines()
+        account2amount = defaultdict(float)
+        code2amount = defaultdict(float)
         move_lines = self._compute_move_lines()
-        self._set_statement_lines(lines, move_lines)
+        self._set_statement_lines(lines, move_lines, account2amount, code2amount)
         move_lines = self._compute_past_invoices_move_lines()
-        self._set_statement_lines(lines, move_lines)
+        self._set_statement_lines(lines, move_lines, account2amount, code2amount)
         self._finalize_lines(lines)
 
         # create lines
@@ -416,6 +422,118 @@ class VatStatement(models.Model):
                 "date_update": fields.Datetime.now(),
             }
         )
+        self._create_update_closing_entry(account2amount, code2amount)
+
+    def _create_update_closing_entry(self, account2amount, code2amount):
+        """Create or update the closing entry, if configuration allows it."""
+        # If no journal is configured, we consider the feature unconfigured.
+        # Fiscal unit closing entries are not supported because it is unclear
+        # how the rounding is going to be distributed, and how the money will be
+        # moved between companies.
+        if not self.company_id.l10n_nl_vat_journal_id or self.multicompany_fiscal_unit:
+            if self.closing_entry_id:
+                self.closing_entry_id.unlink()
+            return
+        vals = {
+            "date": self.to_date,
+            "ref": self.name,
+            "company_id": self.company_id.id,
+            "journal_id": self.l10n_vat_journal_id.id,
+        }
+        if self.closing_entry_id:
+            self.closing_entry_id.line_ids.unlink()
+            self.closing_entry_id.write(vals)
+        else:
+            self.closing_entry_id = self.env["account.move"].create(vals)
+        balance = 0
+        rounding = 0
+        line_vals = []
+        # We round by code, emulating how the NL BTW Statement is filled in by
+        # the user.
+        for _code, amount in code2amount.items():
+            rounding -= amount - int(amount)
+        # The closing move consists of reversing the postings on the tax accounts
+        # and moving the balance on a receivable or payable account.
+        for account, amount in account2amount.items():
+            balance -= amount
+            line_vals.append(
+                {
+                    "name": self.env._("NL BTW Statement"),
+                    "debit": amount if amount > 0 else 0,
+                    "credit": -amount if amount < 0 else 0,
+                    "account_id": account.id,
+                    "move_id": self.closing_entry_id.id,
+                },
+            )
+        if not self.currency_id.is_zero(balance):
+            if not self.currency_id.is_zero(rounding):
+                if rounding < 0:
+                    account = self.company_id.l10n_nl_tax_rounding_loss_account_id
+                    if not account:
+                        raise UserError(
+                            _(
+                                "Please configure a rounding loss account in the "
+                                "NL BTW Statement settings."
+                            ),
+                        )
+                else:
+                    account = self.company_id.l10n_nl_tax_rounding_profit_account_id
+                    if not account:
+                        raise UserError(
+                            _(
+                                "Please configure a rounding profit account in the "
+                                "NL BTW Statement settings."
+                            ),
+                        )
+
+                line_vals.append(
+                    {
+                        "name": _("Rounding"),
+                        "debit": rounding if rounding > 0 else 0,
+                        "credit": -rounding if rounding < 0 else 0,
+                        "account_id": account.id,
+                        "move_id": self.post_move_id.id,
+                    },
+                )
+            balance -= rounding
+            if balance < 0:
+                account = (
+                    self.company_id.l10n_nl_tax_partner_id.property_account_payable_id
+                    or self.company_id.l10n_nl_tax_payable_account_id
+                )
+                if not account:
+                    raise UserError(
+                        _(
+                            "Please configure a payable tax account in the "
+                            "NL BTW Statement settings."
+                        ),
+                    )
+                label = self.env._("Payable tax amount")
+            else:
+                account = (
+                    self.company_id.l10n_nl_tax_partner_id.property_account_receivable_id
+                    or self.company_id.l10n_nl_tax_receivable_account_id
+                )
+                if not account:
+                    raise UserError(
+                        _(
+                            "Please configure a receivable tax account in the "
+                            "NL BTW Statement settings."
+                        ),
+                    )
+                label = self.env._("Receivable tax amount")
+            line_vals.append(
+                {
+                    "name": label,
+                    "debit": balance if balance > 0 else 0,
+                    "credit": -balance if balance < 0 else 0,
+                    "account_id": account.id,
+                    "move_id": self.closing_entry_id.id,
+                },
+            )
+        if line_vals:
+            # Create all lines at once to prevent unbalanced move errors.
+            self.env["account.move.line"].create(line_vals)
 
     def _compute_past_invoices_move_lines(self):
         self.ensure_one()
@@ -429,7 +547,7 @@ class VatStatement(models.Model):
         domain = self._get_move_lines_domain()
         return self.env["account.move.line"].search(domain)
 
-    def _set_statement_lines(self, lines, move_lines):
+    def _set_statement_lines(self, lines, move_lines, account2amount, code2amount):
         self.ensure_one()
         tags_map = self._get_tags_map()
         for line in move_lines:
@@ -444,10 +562,15 @@ class VatStatement(models.Model):
                         else:
                             column = "base"
                     lines[code][column] -= line.balance
+                    if column == "btw":
+                        account2amount[line.account_id] -= line.balance
+                        code2amount[code] -= line.balance
 
     def finalize(self):
         self.ensure_one()
         self.write({"state": "final"})
+        if self.closing_entry_id and self.closing_entry_id.state == "draft":
+            self.closing_entry_id.action_post()
 
     def _check_prev_open_statements(self):
         self.ensure_one()

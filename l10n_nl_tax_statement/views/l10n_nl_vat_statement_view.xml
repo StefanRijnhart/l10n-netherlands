@@ -95,6 +95,11 @@
                         <group name="extra_parameters">
                             <field name="date_posted" />
                             <field name="date_update" />
+                            <field
+                                name="closing_entry_id"
+                                invisible="not closing_entry_id"
+                                readonly="True"
+                            />
                             <field name="currency_id" />
                         </group>
                     </group>
